@@ -15,26 +15,31 @@ NOTIFYICONDATAW trayIcon{};
 bool trayIconAdded = false;
 UINT taskbarCreatedMessage = 0;
 
-HANDLE CreateUserMutex(bool& alreadyRunning) {
+HANDLE CreateUserMutex(bool &alreadyRunning)
+{
     HANDLE token = nullptr;
-    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+        return nullptr;
 
     DWORD size = 0;
     GetTokenInformation(token, TokenUser, nullptr, 0, &size);
-    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || size == 0) {
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || size == 0)
+    {
         CloseHandle(token);
         return nullptr;
     }
 
     // Размер сведений о пользователе определяет Windows, поэтому сначала запрашиваем его.
-    auto* user = static_cast<TOKEN_USER*>(LocalAlloc(LPTR, size));
-    if (user == nullptr) {
+    auto *user = static_cast<TOKEN_USER *>(LocalAlloc(LPTR, size));
+    if (user == nullptr)
+    {
         CloseHandle(token);
         return nullptr;
     }
     const BOOL received = GetTokenInformation(token, TokenUser, user, size, &size);
     CloseHandle(token);
-    if (!received) {
+    if (!received)
+    {
         LocalFree(user);
         return nullptr;
     }
@@ -42,7 +47,8 @@ HANDLE CreateUserMutex(bool& alreadyRunning) {
     LPWSTR sid = nullptr;
     const BOOL converted = ConvertSidToStringSidW(user->User.Sid, &sid);
     LocalFree(user);
-    if (!converted) return nullptr;
+    if (!converted)
+        return nullptr;
 
     const std::wstring name = std::wstring(L"Global\\AntivirusTray.") + sid;
     LocalFree(sid);
@@ -53,23 +59,27 @@ HANDLE CreateUserMutex(bool& alreadyRunning) {
     return mutex;
 }
 
-bool AddTrayIcon(HWND window) {
-    if (trayIconAdded) return true;
+bool AddTrayIcon(HWND window)
+{
+    if (trayIconAdded)
+        return true;
     trayIcon.cbSize = sizeof(trayIcon);
     trayIcon.hWnd = window;
     trayIcon.uID = TRAY_ICON_ID;
     trayIcon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
     trayIcon.uCallbackMessage = WM_TRAYICON;
     trayIcon.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    lstrcpynW(trayIcon.szTip, L"Antivirus — учебный проект",
-        static_cast<int>(ARRAYSIZE(trayIcon.szTip)));
+    lstrcpynW(trayIcon.szTip, L"Antivirus",
+              static_cast<int>(ARRAYSIZE(trayIcon.szTip)));
 
-    if (trayIcon.hIcon == nullptr || !Shell_NotifyIconW(NIM_ADD, &trayIcon)) {
+    if (trayIcon.hIcon == nullptr || !Shell_NotifyIconW(NIM_ADD, &trayIcon))
+    {
         return false;
     }
 
     trayIcon.uVersion = NOTIFYICON_VERSION_4;
-    if (!Shell_NotifyIconW(NIM_SETVERSION, &trayIcon)) {
+    if (!Shell_NotifyIconW(NIM_SETVERSION, &trayIcon))
+    {
         Shell_NotifyIconW(NIM_DELETE, &trayIcon);
         return false;
     }
@@ -78,40 +88,52 @@ bool AddTrayIcon(HWND window) {
     return true;
 }
 
-bool EnsureTrayIcon(HWND window) {
-    if (AddTrayIcon(window)) {
+bool EnsureTrayIcon(HWND window)
+{
+    if (AddTrayIcon(window))
+    {
         KillTimer(window, TRAY_RETRY_TIMER);
         return true;
     }
     return SetTimer(window, TRAY_RETRY_TIMER, 1000, nullptr) != 0;
 }
 
-void RemoveTrayIcon() {
+void RemoveTrayIcon()
+{
     KillTimer(trayIcon.hWnd, TRAY_RETRY_TIMER);
-    if (trayIconAdded) {
+    if (trayIconAdded)
+    {
         Shell_NotifyIconW(NIM_DELETE, &trayIcon);
         trayIconAdded = false;
     }
 }
 
-void ShowMainWindow(HWND window) {
-    if (IsIconic(window)) {
+void ShowMainWindow(HWND window)
+{
+    if (IsIconic(window))
+    {
         ShowWindow(window, SW_RESTORE);
-    } else {
+    }
+    else
+    {
         ShowWindow(window, SW_SHOW);
     }
     SetForegroundWindow(window);
 }
 
-void ShowTrayMenu(HWND window) {
+void ShowTrayMenu(HWND window)
+{
     POINT position{};
-    if (!GetCursorPos(&position)) return;
+    if (!GetCursorPos(&position))
+        return;
 
     HMENU menu = CreatePopupMenu();
-    if (menu == nullptr) return;
+    if (menu == nullptr)
+        return;
 
     if (!AppendMenuW(menu, MF_STRING, ID_OPEN, L"Открыть") ||
-        !AppendMenuW(menu, MF_STRING, ID_EXIT, L"Выход")) {
+        !AppendMenuW(menu, MF_STRING, ID_EXIT, L"Выход"))
+    {
         DestroyMenu(menu);
         return;
     }
@@ -119,38 +141,47 @@ void ShowTrayMenu(HWND window) {
     // Без этого меню трея может не закрыться при клике за его пределами.
     SetForegroundWindow(window);
     const UINT command = static_cast<UINT>(TrackPopupMenu(menu,
-        TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
-        position.x, position.y, 0, window, nullptr));
+                                                          TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+                                                          position.x, position.y, 0, window, nullptr));
 
     // Пустое сообщение предотвращает мгновенное закрытие меню при повторном открытии.
     PostMessageW(window, WM_NULL, 0, 0);
     DestroyMenu(menu);
 
-    if (command != 0) {
+    if (command != 0)
+    {
         PostMessageW(window, WM_COMMAND, command, 0);
-    } else if (trayIconAdded) {
+    }
+    else if (trayIconAdded)
+    {
         Shell_NotifyIconW(NIM_SETFOCUS, &trayIcon);
     }
 }
 
-HMENU CreateMainMenu() {
+HMENU CreateMainMenu()
+{
     HMENU mainMenu = CreateMenu();
     HMENU fileMenu = CreatePopupMenu();
 
-    if (mainMenu == nullptr || fileMenu == nullptr) {
-        if (mainMenu != nullptr) DestroyMenu(mainMenu);
-        if (fileMenu != nullptr) DestroyMenu(fileMenu);
+    if (mainMenu == nullptr || fileMenu == nullptr)
+    {
+        if (mainMenu != nullptr)
+            DestroyMenu(mainMenu);
+        if (fileMenu != nullptr)
+            DestroyMenu(fileMenu);
         return nullptr;
     }
 
-    if (!AppendMenuW(fileMenu, MF_STRING, ID_EXIT, L"Выход")) {
+    if (!AppendMenuW(fileMenu, MF_STRING, ID_EXIT, L"Выход"))
+    {
         DestroyMenu(fileMenu);
         DestroyMenu(mainMenu);
         return nullptr;
     }
 
     if (!AppendMenuW(mainMenu, MF_POPUP,
-        reinterpret_cast<UINT_PTR>(fileMenu), L"Файл")) {
+                     reinterpret_cast<UINT_PTR>(fileMenu), L"Файл"))
+    {
         DestroyMenu(fileMenu);
         DestroyMenu(mainMenu);
         return nullptr;
@@ -159,42 +190,53 @@ HMENU CreateMainMenu() {
     return mainMenu;
 }
 
-LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
-    if (taskbarCreatedMessage != 0 && message == taskbarCreatedMessage) {
+LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (taskbarCreatedMessage != 0 && message == taskbarCreatedMessage)
+    {
         RemoveTrayIcon();
-        if (!EnsureTrayIcon(window)) {
+        if (!EnsureTrayIcon(window))
+        {
             MessageBoxW(window, L"Не удалось запустить восстановление иконки.",
-                L"Ошибка", MB_OK | MB_ICONERROR);
+                        L"Ошибка", MB_OK | MB_ICONERROR);
             DestroyWindow(window);
         }
         return 0;
     }
 
-    switch (message) {
+    switch (message)
+    {
     case WM_TIMER:
-        if (wParam == TRAY_RETRY_TIMER && AddTrayIcon(window)) {
+        if (wParam == TRAY_RETRY_TIMER && AddTrayIcon(window))
+        {
             KillTimer(window, TRAY_RETRY_TIMER);
         }
         return 0;
 
     case WM_TRAYICON:
         // В версии 4 старшая часть lParam содержит номер иконки, младшая — событие.
-        if (HIWORD(lParam) == TRAY_ICON_ID) {
+        if (HIWORD(lParam) == TRAY_ICON_ID)
+        {
             const UINT event = LOWORD(lParam);
-            if (event == WM_LBUTTONUP || event == NIN_SELECT || event == NIN_KEYSELECT) {
+            if (event == WM_LBUTTONUP || event == NIN_SELECT || event == NIN_KEYSELECT)
+            {
                 ShowMainWindow(window);
-            } else if (event == WM_CONTEXTMENU) {
+            }
+            else if (event == WM_CONTEXTMENU)
+            {
                 ShowTrayMenu(window);
             }
         }
         return 0;
 
     case WM_COMMAND:
-        if (LOWORD(wParam) == ID_OPEN) {
+        if (LOWORD(wParam) == ID_OPEN)
+        {
             ShowMainWindow(window);
             return 0;
         }
-        if (LOWORD(wParam) == ID_EXIT) {
+        if (LOWORD(wParam) == ID_EXIT)
+        {
             DestroyWindow(window);
             return 0;
         }
@@ -213,18 +255,21 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         return TRUE;
 
     case WM_ENDSESSION:
-        if (wParam) DestroyWindow(window);
+        if (wParam)
+            DestroyWindow(window);
         return 0;
     }
 
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
-int RunApplication(HINSTANCE instance, int showCommand, bool hidden) {
+int RunApplication(HINSTANCE instance, int showCommand, bool hidden)
+{
     taskbarCreatedMessage = RegisterWindowMessageW(L"TaskbarCreated");
-    if (taskbarCreatedMessage == 0) {
+    if (taskbarCreatedMessage == 0)
+    {
         MessageBoxW(nullptr, L"Не удалось зарегистрировать сообщение панели задач.",
-            L"Ошибка", MB_OK | MB_ICONERROR);
+                    L"Ошибка", MB_OK | MB_ICONERROR);
         return 1;
     }
 
@@ -236,16 +281,18 @@ int RunApplication(HINSTANCE instance, int showCommand, bool hidden) {
     windowClass.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     windowClass.hbrBackground = GetSysColorBrush(COLOR_WINDOW);
 
-    if (!RegisterClassW(&windowClass)) {
+    if (!RegisterClassW(&windowClass))
+    {
         MessageBoxW(nullptr, L"Не удалось зарегистрировать класс окна.",
-            L"Ошибка", MB_OK | MB_ICONERROR);
+                    L"Ошибка", MB_OK | MB_ICONERROR);
         return 1;
     }
 
     HMENU mainMenu = CreateMainMenu();
-    if (mainMenu == nullptr) {
+    if (mainMenu == nullptr)
+    {
         MessageBoxW(nullptr, L"Не удалось создать меню.",
-            L"Ошибка", MB_OK | MB_ICONERROR);
+                    L"Ошибка", MB_OK | MB_ICONERROR);
         return 1;
     }
 
@@ -255,36 +302,41 @@ int RunApplication(HINSTANCE instance, int showCommand, bool hidden) {
         CW_USEDEFAULT, CW_USEDEFAULT, 640, 420,
         nullptr, mainMenu, instance, nullptr);
 
-    if (window == nullptr) {
+    if (window == nullptr)
+    {
         DestroyMenu(mainMenu);
         MessageBoxW(nullptr, L"Не удалось создать главное окно.",
-            L"Ошибка", MB_OK | MB_ICONERROR);
+                    L"Ошибка", MB_OK | MB_ICONERROR);
         return 1;
     }
 
-    if (!EnsureTrayIcon(window)) {
+    if (!EnsureTrayIcon(window))
+    {
         MessageBoxW(window, L"Не удалось запустить добавление иконки в область уведомлений.",
-            L"Ошибка", MB_OK | MB_ICONERROR);
+                    L"Ошибка", MB_OK | MB_ICONERROR);
         DestroyWindow(window);
         return 1;
     }
 
-    if (!hidden) {
+    if (!hidden)
+    {
         ShowWindow(window, showCommand);
         UpdateWindow(window);
     }
 
     MSG message{};
     BOOL result = 0;
-    while ((result = GetMessageW(&message, nullptr, 0, 0)) > 0) {
+    while ((result = GetMessageW(&message, nullptr, 0, 0)) > 0)
+    {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
 
     // GetMessage возвращает 0 при завершении и -1 при ошибке.
-    if (result == -1) {
+    if (result == -1)
+    {
         MessageBoxW(window, L"Не удалось получить сообщение Windows.",
-            L"Ошибка", MB_OK | MB_ICONERROR);
+                    L"Ошибка", MB_OK | MB_ICONERROR);
         DestroyWindow(window);
         return 1;
     }
@@ -292,33 +344,38 @@ int RunApplication(HINSTANCE instance, int showCommand, bool hidden) {
     return static_cast<int>(message.wParam);
 }
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
+{
     int argumentCount = 0;
-    LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
-    if (arguments == nullptr) {
+    LPWSTR *arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
+    if (arguments == nullptr)
+    {
         MessageBoxW(nullptr, L"Не удалось прочитать параметры запуска.",
-            L"Ошибка", MB_OK | MB_ICONERROR);
+                    L"Ошибка", MB_OK | MB_ICONERROR);
         return 1;
     }
 
     const bool hidden = argumentCount == 2 && lstrcmpW(arguments[1], L"--hidden") == 0;
     const bool valid = argumentCount == 1 || hidden;
     LocalFree(arguments);
-    if (!valid) {
+    if (!valid)
+    {
         MessageBoxW(nullptr, L"Запуск: AntivirusTray.exe [--hidden]\n"
-            L"Параметр --hidden запускает программу без показа окна.",
-            L"Неизвестный параметр", MB_OK | MB_ICONERROR);
+                             L"Параметр --hidden запускает программу без показа окна.",
+                    L"Неизвестный параметр", MB_OK | MB_ICONERROR);
         return 2;
     }
 
     bool alreadyRunning = false;
     HANDLE mutex = CreateUserMutex(alreadyRunning);
-    if (mutex == nullptr) {
+    if (mutex == nullptr)
+    {
         MessageBoxW(nullptr, L"Не удалось проверить наличие другого экземпляра программы.",
-            L"Ошибка", MB_OK | MB_ICONERROR);
+                    L"Ошибка", MB_OK | MB_ICONERROR);
         return 1;
     }
-    if (alreadyRunning) {
+    if (alreadyRunning)
+    {
         CloseHandle(mutex);
         return 0;
     }
