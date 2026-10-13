@@ -2,6 +2,8 @@
 #include <shellapi.h>
 #include <sddl.h>
 #include <string>
+#include "service_client.h"
+#include "service_shared.h"
 
 constexpr UINT ID_OPEN = 1001;
 constexpr UINT ID_EXIT = 1002;
@@ -50,10 +52,10 @@ HANDLE CreateUserMutex(bool &alreadyRunning)
     if (!converted)
         return nullptr;
 
-    const std::wstring name = std::wstring(L"Global\\AntivirusTray.") + sid;
+    const std::wstring name = std::wstring(L"Local\\AntivirusTray.") + sid;
     LocalFree(sid);
 
-    // SID разделяет пользователей, а Global охватывает разные сеансы одного пользователя.
+    // SID разделяет пользователей, а Local допускает экземпляр в каждом сеансе.
     HANDLE mutex = CreateMutexW(nullptr, FALSE, name.c_str());
     alreadyRunning = mutex != nullptr && GetLastError() == ERROR_ALREADY_EXISTS;
     return mutex;
@@ -237,7 +239,13 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         }
         if (LOWORD(wParam) == ID_EXIT)
         {
-            DestroyWindow(window);
+            const DWORD error = StopServiceThroughRpc();
+            if (error != ERROR_SUCCESS)
+            {
+                const std::wstring text = L"Не удалось остановить службу через RPC. Код ошибки: " +
+                                          std::to_wstring(error);
+                MessageBoxW(window, text.c_str(), L"Ошибка", MB_OK | MB_ICONERROR);
+            }
             return 0;
         }
         break;
@@ -263,7 +271,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
-int RunApplication(HINSTANCE instance, int showCommand, bool hidden)
+int RunApplication(HINSTANCE instance, int showCommand, bool hidden, HANDLE exitEvent)
 {
     taskbarCreatedMessage = RegisterWindowMessageW(L"TaskbarCreated");
     if (taskbarCreatedMessage == 0)
@@ -324,24 +332,32 @@ int RunApplication(HINSTANCE instance, int showCommand, bool hidden)
         UpdateWindow(window);
     }
 
-    MSG message{};
-    BOOL result = 0;
-    while ((result = GetMessageW(&message, nullptr, 0, 0)) > 0)
+    while (true)
     {
-        TranslateMessage(&message);
-        DispatchMessageW(&message);
+        // Одновременно ждём сообщения окна и сигнал завершения от службы.
+        const DWORD result = MsgWaitForMultipleObjects(1, &exitEvent, FALSE, INFINITE,
+                                                       QS_ALLINPUT);
+        if (result == WAIT_OBJECT_0)
+        {
+            DestroyWindow(window);
+            return 0;
+        }
+        if (result == WAIT_FAILED)
+        {
+            MessageBoxW(window, L"Не удалось дождаться события Windows.",
+                        L"Ошибка", MB_OK | MB_ICONERROR);
+            DestroyWindow(window);
+            return 1;
+        }
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        {
+            if (message.message == WM_QUIT)
+                return static_cast<int>(message.wParam);
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
     }
-
-    // GetMessage возвращает 0 при завершении и -1 при ошибке.
-    if (result == -1)
-    {
-        MessageBoxW(window, L"Не удалось получить сообщение Windows.",
-                    L"Ошибка", MB_OK | MB_ICONERROR);
-        DestroyWindow(window);
-        return 1;
-    }
-
-    return static_cast<int>(message.wParam);
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
@@ -366,10 +382,33 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         return 2;
     }
 
+    DWORD error = ERROR_SUCCESS;
+    const StartupAction action = CheckServiceStartup(error);
+    if (action == StartupAction::Exit)
+        return 0;
+    if (action == StartupAction::Error)
+    {
+        const std::wstring text = error == ERROR_SERVICE_DOES_NOT_EXIST
+            ? L"Служба не установлена. Запустите AntivirusService.exe --install от имени администратора."
+            : L"Не удалось проверить или запустить службу. Код ошибки: " + std::to_wstring(error);
+        MessageBoxW(nullptr, text.c_str(), L"Ошибка", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
+    const std::wstring eventName = ExitEventName(GetCurrentProcessId());
+    HANDLE exitEvent = OpenEventW(SYNCHRONIZE, FALSE, eventName.c_str());
+    if (exitEvent == nullptr)
+    {
+        MessageBoxW(nullptr, L"Не удалось открыть сигнал завершения от службы.",
+                    L"Ошибка", MB_OK | MB_ICONERROR);
+        return 1;
+    }
+
     bool alreadyRunning = false;
     HANDLE mutex = CreateUserMutex(alreadyRunning);
     if (mutex == nullptr)
     {
+        CloseHandle(exitEvent);
         MessageBoxW(nullptr, L"Не удалось проверить наличие другого экземпляра программы.",
                     L"Ошибка", MB_OK | MB_ICONERROR);
         return 1;
@@ -377,11 +416,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
     if (alreadyRunning)
     {
         CloseHandle(mutex);
+        CloseHandle(exitEvent);
         return 0;
     }
 
     // Дескриптор остаётся открытым, пока работает приложение, включая скрытый режим.
-    const int result = RunApplication(instance, showCommand, hidden);
+    const int result = RunApplication(instance, showCommand, hidden, exitEvent);
     CloseHandle(mutex);
+    CloseHandle(exitEvent);
     return result;
 }

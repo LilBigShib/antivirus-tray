@@ -1,0 +1,9 @@
+[
+    uuid(68b8c716-672d-4aa5-b2a3-86f495e038eb),
+    version(1.0),
+    pointer_default(unique)
+]
+interface AntivirusControl
+{
+    unsigned long RequestServiceStop([in] handle_t binding);
+}
